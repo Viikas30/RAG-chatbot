@@ -5,12 +5,13 @@ from sentence_transformers import SentenceTransformer
 from langchain.vectorstores import Pinecone as LangChainPinecone
 from langchain.embeddings.base import Embeddings
 from langchain.llms import HuggingFaceHub
-from langchain import PromptTemplate
-from langchain.chains import LLMChain
+from pinecone import Pinecone, ServerlessSpec
 from dotenv import load_dotenv
 import os
-import pinecone
-
+from langchain import PromptTemplate
+from langchain.chains import LLMChain
+import numpy as np
+from langchain_google_genai import GoogleGenerativeAI
 
 class CustomEmbedding(Embeddings):
     """Custom Embedding class wrapping SentenceTransformer."""
@@ -20,79 +21,85 @@ class CustomEmbedding(Embeddings):
 
     def embed_documents(self, texts):
         embeddings = self.embedding_model.encode(texts, show_progress_bar=True, convert_to_numpy=True)
+        # Ensure embeddings are returned as a list of lists
         return embeddings.tolist()
 
     def embed_query(self, text):
         embedding = self.embedding_model.encode([text], convert_to_numpy=True)[0]
         return embedding.tolist()
 
-
 class ChatBot():
     def __init__(self):
         # Load environment variables
         load_dotenv()
 
-        # Load and split documents
-        loader = TextLoader('haircare.txt')  # Ensure this file exists in the working directory
+        # Step 1: Load and Split Documents
+        loader = TextLoader('Your Text file')
         documents = loader.load()
         text_splitter = CharacterTextSplitter(chunk_size=1000, chunk_overlap=4)
         docs = text_splitter.split_documents(documents)
 
-        # Setup embeddings
-        model_name = "sentence-transformers/all-distilroberta-v1"
+        # Step 2: Setup Sentence Transformers for Embeddings
+        model_name = "sentence-transformers/all-distilroberta-v1"  # 384-dimensional output
         embeddings = CustomEmbedding(model_name)
 
-        # Initialize Pinecone
-        pinecone.init(api_key=os.getenv("PINECONE_API_KEY"), environment="us-east1-gcp")
+        # Step 3: Initialize Pinecone instance
+        pc = Pinecone(pinecone_api_key1)
         index_name = "hair-index"
 
-        if index_name not in pinecone.list_indexes():
-            pinecone.create_index(
+
+
+        # Step 5: Create Pinecone Index with dimension 384
+        if index_name not in pc.list_indexes().names():
+            pc.create_index(
                 name=index_name,
-                dimension=768,
-                metric="cosine"
+                dimension=768,  # Match SentenceTransformer embedding dimension
+                metric="cosine",
+                spec=ServerlessSpec(
+                    cloud="aws",  # Specify your cloud provider
+                    region="us-east-1"  # Specify your region
+                )
             )
 
+        # Step 6: Connect LangChain Pinecone and documents
         self.docsearch = LangChainPinecone.from_documents(
             docs,
             embeddings,
             index_name=index_name
         )
 
-        # Setup LLM
         repo_id = "mistralai/Mixtral-8x7B-Instruct-v0.1"
         self.llm = HuggingFaceHub(
             repo_id=repo_id,
             model_kwargs={"temperature": 0.8, "top_p": 0.8, "top_k": 50},
-            huggingfacehub_api_token=os.getenv("HUGGINGFACE_API_KEY")
-        )
+            huggingfacehub_api_token=huggingface_api_token1)      # Step 8: Define Prompt Template
+        self.template ="""
+  You are a Hairstylist. These Human will ask you a questions about their Hair. Use following piece of context to answer the question. 
+  If you don't know the answer, just say you don't know. 
+  You answer with short and concise answer, no longer than2 sentences.
 
-        # Define prompt template
-        self.template = """
-        You are a Hairstylist. These Humans will ask you questions about their Hair. Use the following piece of context to answer the question. 
-        If you don't know the answer, just say you don't know. 
-        Your answer should be short and concise, no longer than 2 sentences.
+  Context: {context}
+  Question: {question}
+  Answer: 
 
-        Context: {context}
-        Question: {question}
-        Answer: 
-        """
+  """
         self.prompt = PromptTemplate(template=self.template, input_variables=["context", "question"])
 
-        # Set up LLM Chain
+        # Step 9: Set up LLM Chain for RAG (Retrieval-Augmented Generation)
         self.chain = LLMChain(
             llm=self.llm,
             prompt=self.prompt
         )
 
+    # Method to run the chatbot with a user query
     def get_answer(self, question):
         # Perform similarity search in Pinecone to retrieve relevant documents
         docs = self.docsearch.similarity_search(query=question, k=5)
-
+        
         # If no relevant documents, return "I don't know."
         if not docs:
             return "I don't know."
-
+        
         # Combine documents into context
         context = " ".join([doc.page_content for doc in docs])
 
@@ -101,22 +108,19 @@ class ChatBot():
 
         return result
 
+# Streamlit UI for chatbot interaction
+def main():
+    st.title("Haircare Chatbot")
 
-# Streamlit App
-st.title("Haircare Specialist Chatbot")
-st.markdown("Ask any questions about haircare and get answers from the Haircare Specialist!")
+    # Initialize the chatbot
+    chatbot = ChatBot()
 
-# Initialize chatbot instance
-if "chatbot" not in st.session_state:
-    st.session_state.chatbot = ChatBot()
+    # User input
+    user_question = st.text_input("Ask a question about haircare:")
 
-# User input
-user_question = st.text_input("Your Question:")
-if st.button("Get Answer"):
-    if user_question.strip():
-        with st.spinner("Processing..."):
-            response = st.session_state.chatbot.get_answer(user_question)
-        st.success(response)
-    else:
-        st.warning("Please enter a question.")
+    if user_question:
+        response = chatbot.get_answer(user_question)
+        st.write(f"Answer: {response}")
 
+if __name__ == "__main__":
+    main()
