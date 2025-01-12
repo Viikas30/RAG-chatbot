@@ -44,7 +44,7 @@ class ChatBot():
         embeddings = CustomEmbedding(model_name)
 
         # Step 3: Initialize Pinecone instance
-        pc = Pinecone(pinecone_api_key1)
+        pc = Pinecone(PINECONE_API_KEY)
         index_name = "hair-index"
 
 
@@ -72,7 +72,7 @@ class ChatBot():
         self.llm = HuggingFaceHub(
             repo_id=repo_id,
             model_kwargs={"temperature": 0.8, "top_p": 0.8, "top_k": 50},
-            huggingfacehub_api_token=huggingface_api_token1)      # Step 8: Define Prompt Template
+            huggingfacehub_api_token=HUGGINGFACE_API_KE)      # Step 8: Define Prompt Template
         self.template ="""
   You are a Hairstylist. These Human will ask you a questions about their Hair. Use following piece of context to answer the question. 
   If you don't know the answer, just say you don't know. 
